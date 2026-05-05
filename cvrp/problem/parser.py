@@ -128,3 +128,54 @@ def _parse_num_vehicles_from_filename(filepath: str) -> int:
             f"expected pattern '...-k<N>.vrp'"
         )
     return int(match.group(1))
+
+def parse_sol_file(
+    filepath: str,
+    customer_indices: bool = True,
+) -> tuple[list[list[int]], float]:
+    """Parse a CVRPLIB .sol file into routes and reported cost.
+
+    The .sol format consists of one line per route in the form
+    'Route #N: c1 c2 c3 ...' followed by a final 'Cost <value>' line.
+
+    PyVRP/Instances .sol files use 1-based customer indices: id 1 means
+    the first customer (which corresponds to node 2 in the .vrp file,
+    since node 1 is the depot). Other VRPLIB sources use raw node ids.
+
+    Args:
+        filepath: Path to the .sol file.
+        customer_indices: If True (default), shift each id by +1 so that
+            it matches the node-id convention of the .vrp file. Set to
+            False when the .sol already uses node ids directly.
+
+    Returns:
+        Tuple (routes, cost). Routes is a list of node-id lists;
+        cost is the total distance reported by the solution file.
+    """
+    if not os.path.isfile(filepath):
+        raise FileNotFoundError(f"file not found: {filepath}")
+
+    routes: list[list[int]] = []
+    cost: float | None = None
+
+    with open(filepath, "r") as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("Route"):
+                _, _, payload = stripped.partition(":")
+                ids = [int(token) for token in payload.split()]
+                if customer_indices:
+                    ids = [c + 1 for c in ids]
+                routes.append(ids)
+            elif stripped.startswith("Cost"):
+                _, _, value = stripped.partition(" ")
+                cost = float(value.strip())
+
+    if cost is None:
+        raise ValueError(f"Cost line not found in {filepath}")
+    if not routes:
+        raise ValueError(f"no routes found in {filepath}")
+
+    return routes, cost
