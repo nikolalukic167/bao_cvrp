@@ -208,3 +208,6 @@ __marimo__/
 
 
 *.docx
+scratch.ipynb
+scratch_*.ipynb
+.ipynb_checkpoints/
