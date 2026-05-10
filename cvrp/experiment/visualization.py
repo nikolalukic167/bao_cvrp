@@ -1,17 +1,18 @@
-"""Plotting helpers for CVRP debugging.
+"""Plotting helpers for CVRP debugging and Layer~4 algorithm demos.
 
-Two minimal functions used to sanity-check decoded solutions during
-algorithm development:
-    plot_instance - depot + customers as a 2D scatter
-    plot_routes   - colored polylines per vehicle, overlaid on the scatter
+Includes geographic plots (``plot_instance``, ``plot_routes``),
+``plot_pareto_front``, and iteration-wise ``plot_convergence`` using f1
+as a provisional proxy metric.
 """
 
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
-from typing import Sequence
+from typing import Any, Iterable, Sequence
+
 import matplotlib.cm as cm
+import numpy as np
 
 from cvrp.problem.instance import CVRPInstance
 
@@ -113,4 +114,68 @@ def plot_routes(
             zorder=1,
         )
 
+    return ax
+
+
+def _f1_values(population: Iterable[Any]) -> list[float]:
+    out: list[float] = []
+    for ind in population:
+        fv = getattr(getattr(ind, "fitness", None), "values", None)
+        if fv is None:
+            continue
+        out.append(float(fv[0]))
+    return out
+
+
+def plot_pareto_front(archive: Sequence[Any], ax: Axes | None = None) -> Axes:
+    """Scatter f2 vs f1 for non-dominated individuals (both minimized)."""
+    if ax is None:
+        _, ax = plt.subplots(figsize=(7, 5))
+
+    f1 = []
+    f2 = []
+    for ind in archive:
+        fv = getattr(getattr(ind, "fitness", None), "values", None)
+        if fv is None or len(fv) < 2:
+            continue
+        f1.append(float(fv[0]))
+        f2.append(float(fv[1]))
+
+    ax.scatter(f1, f2, s=36, alpha=0.75, edgecolors="steelblue")
+    ax.set_xlabel(r"$f_1$ (distance + penalty)")
+    ax.set_ylabel(r"$f_2$ (load imbalance)")
+    ax.set_title("Pareto-front approximation")
+    ax.grid(True, alpha=0.3)
+    return ax
+
+
+def plot_convergence(history: Sequence[Sequence[Any]], ax: Axes | None = None) -> Axes:
+    """Per-step f1 envelopes (proxy until Layer ~5 hypervolume)."""
+    if ax is None:
+        _, ax = plt.subplots(figsize=(7, 4))
+
+    if not history:
+        return ax
+
+    best: list[float] = []
+    med: list[float] = []
+    worst: list[float] = []
+    for population in history:
+        xs = _f1_values(population)
+        if not xs:
+            continue
+        arr = np.asarray(xs, dtype=float)
+        best.append(float(np.min(arr)))
+        med.append(float(np.median(arr)))
+        worst.append(float(np.max(arr)))
+
+    gens = np.arange(len(best))
+    ax.fill_between(gens, worst, best, alpha=0.2, label="range (f1)")
+    ax.plot(gens, best, label="best $f_1$")
+    ax.plot(gens, med, label="median $f_1$")
+    ax.set_xlabel("Generation / iteration")
+    ax.set_ylabel(r"$f_1$")
+    ax.set_title("Convergence proxy (distance objective)")
+    ax.legend(loc="best", frameon=True)
+    ax.grid(True, alpha=0.3)
     return ax
