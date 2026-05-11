@@ -29,7 +29,7 @@ class CVRPInstance:
     coords: dict[int, tuple[float, float]] = field(default_factory=dict)
     demands: dict[int, int] = field(default_factory=dict)
 
-    def __post__init__(self) -> None:
+    def __post_init__(self) -> None:
         if self.dimension <= 1:
             raise ValueError(f"dimension must be > 1, got  {self.dimension}")
         if self.capacity <= 0:
