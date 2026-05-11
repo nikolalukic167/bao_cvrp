@@ -9,4 +9,4 @@ joblib>=1.3
 jupyter>=1.0
 notebook>=7.0
 ipykernel>=6.27
-stac
+# stac: used as local patched folder (stac/) — not installed via pip
