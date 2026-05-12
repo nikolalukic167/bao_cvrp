@@ -1,13 +1,10 @@
-"""Run grid search, mini-grid, and full experiments for the PG7 CVRP project.
+"""Run grid search and full experiments for the PG7 CVRP project.
 
-Three phases:
-    grid       — full grid search on giant_tour for each algorithm; saves
-                 best settings to experiments/best_hyperparams.json.
-    mini-grid  — small variation around the giant_tour optimum on
-                 cluster_first; updates the JSON with per-representation
-                 hyperparameters.
-    full       — independent runs per (algorithm, representation, instance),
-                 writing one CSV per (algorithm, representation, instance).
+Two phases:
+    grid — full grid search on both representations for each algorithm;
+           saves best settings to experiments/best_hyperparams.json.
+    full — independent runs per (algorithm, representation, instance),
+           writing one CSV per (algorithm, representation, instance).
 
 The --smoke-test flag runs a tiny end-to-end version that exercises the
 same code paths in a few minutes: one instance, reduced grids, fewer
@@ -17,7 +14,6 @@ experiments/ clean.
 Usage:
     python -m scripts.run_experiments --phase all
     python -m scripts.run_experiments --phase grid
-    python -m scripts.run_experiments --phase mini-grid
     python -m scripts.run_experiments --phase full --n-jobs 4
     python -m scripts.run_experiments --phase all --smoke-test
 """
@@ -30,7 +26,6 @@ import os
 from itertools import product
 from typing import Any
 
-import pandas as pd
 from joblib import Parallel, delayed
 
 from cvrp.experiment.ga.nsga2_executer import NSGA2Executer
@@ -52,18 +47,20 @@ FULL_NSGA2_SPEA2_GRID = {
     "crossover_rate": [0.7, 0.9],
     "mutation_rate": [0.05, 0.1, 0.2],
 }
-FULL_PACO_GRID = {
+FULL_PACO_GRID_GIANT_TOUR = {
     "n_ants": [30, 50],
     "alpha1": [0.5, 1.0, 2.0],
     "alpha2": [0.5, 1.0, 2.0],
     "beta": [2.0, 5.0],
     "rho": [0.05, 0.1],
 }
-
-FULL_NSGA2_SPEA2_MINI_GRID_PARAM = "mutation_rate"
-FULL_NSGA2_SPEA2_MINI_GRID_VALUES = [0.05, 0.1, 0.2]
-FULL_PACO_MINI_GRID = {
+# beta is excluded: on cluster_first construction uses only
+# tau1^alpha1 * tau2^alpha2 — no geometric heuristic eta exists
+# between a customer and a vehicle id, so beta has no effect.
+FULL_PACO_GRID_CLUSTER_FIRST = {
+    "n_ants": [30, 50],
     "alpha1": [0.5, 1.0, 2.0],
+    "alpha2": [0.5, 1.0, 2.0],
     "rho": [0.05, 0.1],
 }
 
@@ -83,18 +80,17 @@ SMOKE_NSGA2_SPEA2_GRID = {
     "crossover_rate": [0.9],
     "mutation_rate": [0.05, 0.1],
 }
-SMOKE_PACO_GRID = {
+SMOKE_PACO_GRID_GIANT_TOUR = {
     "n_ants": [10],
     "alpha1": [0.5, 1.0],
     "alpha2": [1.0],
     "beta": [2.0],
     "rho": [0.1],
 }
-
-SMOKE_NSGA2_SPEA2_MINI_GRID_PARAM = "mutation_rate"
-SMOKE_NSGA2_SPEA2_MINI_GRID_VALUES = [0.05, 0.1]
-SMOKE_PACO_MINI_GRID = {
+SMOKE_PACO_GRID_CLUSTER_FIRST = {
+    "n_ants": [10],
     "alpha1": [0.5, 1.0],
+    "alpha2": [1.0],
     "rho": [0.1],
 }
 
@@ -173,43 +169,6 @@ def grid_search_algorithm(
     }
 
 
-def build_mini_grid_for_ga(
-    giant_tour_hyperparams: dict[str, Any],
-    mini_param: str,
-    mini_values: list,
-) -> dict[str, list]:
-    """Build a mini-grid that varies one parameter and fixes the rest.
-
-    Used for NSGA2 and SPEA2: fixes pop_size and crossover_rate from
-    the giant_tour optimum, varies mutation_rate (or another single param).
-    """
-    grid = {}
-    for key, value in giant_tour_hyperparams.items():
-        if key == mini_param:
-            grid[key] = mini_values
-        else:
-            grid[key] = [value]
-    return grid
-
-
-def build_mini_grid_for_paco(
-    giant_tour_hyperparams: dict[str, Any],
-    mini_grid: dict[str, list],
-) -> dict[str, list]:
-    """Build a mini-grid that varies the chosen PACO parameters.
-
-    Fixes n_ants, alpha2, beta from the giant_tour optimum.
-    Varies alpha1 and rho across the values in mini_grid.
-    """
-    grid = {}
-    for key, value in giant_tour_hyperparams.items():
-        if key in mini_grid:
-            grid[key] = mini_grid[key]
-        else:
-            grid[key] = [value]
-    return grid
-
-
 def run_one_task(
     executer_class: type,
     algorithm: str,
@@ -258,7 +217,7 @@ def run_full_experiments(
     """Run all (algorithm, representation, instance) tasks in parallel.
 
     Reads hyperparameters separately per representation from the nested
-    JSON structure produced by grid + mini-grid phases.
+    JSON structure produced by the grid phase.
     """
     algorithms = [
         ("nsga2", NSGA2Executer),
@@ -272,7 +231,7 @@ def run_full_experiments(
             if representation not in best_hyperparams.get(algorithm, {}):
                 raise KeyError(
                     f"Missing hyperparams for {algorithm}/{representation}. "
-                    f"Run --phase mini first, or use --phase all."
+                    f"Run --phase grid first, or use --phase all."
                 )
 
     tasks = []
@@ -307,108 +266,67 @@ def run_full_experiments(
 
 def run_grid_phase(
     nsga2_spea2_grid: dict[str, list],
-    paco_grid: dict[str, list],
+    paco_grid_giant_tour: dict[str, list],
+    paco_grid_cluster_first: dict[str, list],
     extra_kwargs: dict[str, dict[str, Any]],
     n_seeds: int,
     best_hyperparams_path: str,
 ) -> None:
-    """Phase 1: grid search on giant_tour for all three algorithms."""
+    """Grid search on both representations for all three algorithms.
+
+    PACO uses separate grids per representation: beta is included for
+    giant_tour (where eta^beta guides construction geometrically) but
+    excluded for cluster_first (where no geometric heuristic exists
+    between a customer and a vehicle id, so beta has no effect).
+    """
     print("=" * 60)
-    print("PHASE 1 — GRID SEARCH ON GIANT_TOUR")
+    print("PHASE 1 — GRID SEARCH")
     print("=" * 60)
+
+    ga_algorithms = [
+        ("nsga2", NSGA2Executer, nsga2_spea2_grid),
+        ("spea2", SPEA2Executer, nsga2_spea2_grid),
+    ]
+    paco_grids = {
+        "giant_tour": paco_grid_giant_tour,
+        "cluster_first": paco_grid_cluster_first,
+    }
+    representations = ["giant_tour", "cluster_first"]
 
     best: dict[str, dict[str, dict[str, Any]]] = {}
 
-    print("\nNSGA2...")
-    nsga2_gt = grid_search_algorithm(
-        NSGA2Executer, GRID_INSTANCE, nsga2_spea2_grid,
-        extra_kwargs["nsga2"], "giant_tour", n_seeds,
-    )
-    best["nsga2"] = {"giant_tour": nsga2_gt}
-    print(f"  Best NSGA2/giant_tour: {nsga2_gt}")
-
-    print("\nSPEA2...")
-    spea2_gt = grid_search_algorithm(
-        SPEA2Executer, GRID_INSTANCE, nsga2_spea2_grid,
-        extra_kwargs["spea2"], "giant_tour", n_seeds,
-    )
-    best["spea2"] = {"giant_tour": spea2_gt}
-    print(f"  Best SPEA2/giant_tour: {spea2_gt}")
+    for algorithm, executer_class, grid in ga_algorithms:
+        print(f"\n{algorithm.upper()}...")
+        best[algorithm] = {}
+        for representation in representations:
+            result = grid_search_algorithm(
+                executer_class, GRID_INSTANCE, grid,
+                extra_kwargs[algorithm], representation, n_seeds,
+            )
+            best[algorithm][representation] = result
+            print(f"  Best {algorithm}/{representation}: {result}")
 
     print("\nPACO...")
-    paco_gt = grid_search_algorithm(
-        PACOExecuter, GRID_INSTANCE, paco_grid,
-        extra_kwargs["paco"], "giant_tour", n_seeds,
-    )
-    best["paco"] = {"giant_tour": paco_gt}
-    print(f"  Best PACO/giant_tour: {paco_gt}")
+    best["paco"] = {}
+    for representation in representations:
+        result = grid_search_algorithm(
+            PACOExecuter, GRID_INSTANCE, paco_grids[representation],
+            extra_kwargs["paco"], representation, n_seeds,
+        )
+        best["paco"][representation] = result
+        print(f"  Best paco/{representation}: {result}")
 
-    os.makedirs(os.path.dirname(best_hyperparams_path), exist_ok=True)
+    os.makedirs(os.path.dirname(best_hyperparams_path) or ".", exist_ok=True)
     with open(best_hyperparams_path, "w") as f:
         json.dump(best, f, indent=2)
     print(f"\nSaved best hyperparams to {best_hyperparams_path}")
-
-
-def run_mini_grid_phase(
-    nsga2_spea2_mini_param: str,
-    nsga2_spea2_mini_values: list,
-    paco_mini_grid: dict[str, list],
-    extra_kwargs: dict[str, dict[str, Any]],
-    n_seeds: int,
-    best_hyperparams_path: str,
-) -> None:
-    """Phase 2: mini-grid on cluster_first, anchored on the giant_tour optimum."""
-    print("=" * 60)
-    print("PHASE 2 — MINI-GRID ON CLUSTER_FIRST")
-    print("=" * 60)
-
-    with open(best_hyperparams_path) as f:
-        best = json.load(f)
-
-    print("\nNSGA2...")
-    nsga2_gt_hp = best["nsga2"]["giant_tour"]["hyperparams"]
-    nsga2_mini = build_mini_grid_for_ga(
-        nsga2_gt_hp, nsga2_spea2_mini_param, nsga2_spea2_mini_values
-    )
-    nsga2_cf = grid_search_algorithm(
-        NSGA2Executer, GRID_INSTANCE, nsga2_mini,
-        extra_kwargs["nsga2"], "cluster_first", n_seeds,
-    )
-    best["nsga2"]["cluster_first"] = nsga2_cf
-    print(f"  Best NSGA2/cluster_first: {nsga2_cf}")
-
-    print("\nSPEA2...")
-    spea2_gt_hp = best["spea2"]["giant_tour"]["hyperparams"]
-    spea2_mini = build_mini_grid_for_ga(
-        spea2_gt_hp, nsga2_spea2_mini_param, nsga2_spea2_mini_values
-    )
-    spea2_cf = grid_search_algorithm(
-        SPEA2Executer, GRID_INSTANCE, spea2_mini,
-        extra_kwargs["spea2"], "cluster_first", n_seeds,
-    )
-    best["spea2"]["cluster_first"] = spea2_cf
-    print(f"  Best SPEA2/cluster_first: {spea2_cf}")
-
-    print("\nPACO...")
-    paco_gt_hp = best["paco"]["giant_tour"]["hyperparams"]
-    paco_mini = build_mini_grid_for_paco(paco_gt_hp, paco_mini_grid)
-    paco_cf = grid_search_algorithm(
-        PACOExecuter, GRID_INSTANCE, paco_mini,
-        extra_kwargs["paco"], "cluster_first", n_seeds,
-    )
-    best["paco"]["cluster_first"] = paco_cf
-    print(f"  Best PACO/cluster_first: {paco_cf}")
-
-    with open(best_hyperparams_path, "w") as f:
-        json.dump(best, f, indent=2)
-    print(f"\nUpdated best hyperparams in {best_hyperparams_path}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--phase",
-        choices=["grid", "mini-grid", "full", "all"],
+        choices=["grid", "full", "all"],
         default="all",
         help="Which phase to run.",
     )
@@ -431,10 +349,8 @@ def main() -> None:
         n_grid_seeds = SMOKE_N_GRID_SEEDS
         n_full_seeds = SMOKE_N_FULL_SEEDS
         nsga2_spea2_grid = SMOKE_NSGA2_SPEA2_GRID
-        paco_grid = SMOKE_PACO_GRID
-        nsga2_spea2_mini_param = SMOKE_NSGA2_SPEA2_MINI_GRID_PARAM
-        nsga2_spea2_mini_values = SMOKE_NSGA2_SPEA2_MINI_GRID_VALUES
-        paco_mini_grid = SMOKE_PACO_MINI_GRID
+        paco_grid_giant_tour = SMOKE_PACO_GRID_GIANT_TOUR
+        paco_grid_cluster_first = SMOKE_PACO_GRID_CLUSTER_FIRST
         extra_kwargs = SMOKE_EXTRA_KWARGS
         instances_override = [GRID_INSTANCE]
         print("*** SMOKE TEST MODE ***")
@@ -444,10 +360,8 @@ def main() -> None:
         n_grid_seeds = FULL_N_GRID_SEEDS
         n_full_seeds = FULL_N_FULL_SEEDS
         nsga2_spea2_grid = FULL_NSGA2_SPEA2_GRID
-        paco_grid = FULL_PACO_GRID
-        nsga2_spea2_mini_param = FULL_NSGA2_SPEA2_MINI_GRID_PARAM
-        nsga2_spea2_mini_values = FULL_NSGA2_SPEA2_MINI_GRID_VALUES
-        paco_mini_grid = FULL_PACO_MINI_GRID
+        paco_grid_giant_tour = FULL_PACO_GRID_GIANT_TOUR
+        paco_grid_cluster_first = FULL_PACO_GRID_CLUSTER_FIRST
         extra_kwargs = FULL_EXTRA_KWARGS
         instances_override = None
 
@@ -455,20 +369,13 @@ def main() -> None:
 
     if args.phase in ("grid", "all"):
         run_grid_phase(
-            nsga2_spea2_grid, paco_grid, extra_kwargs,
-            n_grid_seeds, best_hyperparams_path,
-        )
-
-    if args.phase in ("mini-grid", "all"):
-        run_mini_grid_phase(
-            nsga2_spea2_mini_param, nsga2_spea2_mini_values,
-            paco_mini_grid, extra_kwargs,
-            n_grid_seeds, best_hyperparams_path,
+            nsga2_spea2_grid, paco_grid_giant_tour, paco_grid_cluster_first,
+            extra_kwargs, n_grid_seeds, best_hyperparams_path,
         )
 
     if args.phase in ("full", "all"):
         print("\n" + "=" * 60)
-        print("PHASE 3 — FULL EXPERIMENTS")
+        print("PHASE 2 — FULL EXPERIMENTS")
         print("=" * 60)
 
         with open(best_hyperparams_path) as f:
