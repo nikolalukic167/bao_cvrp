@@ -1,4 +1,10 @@
-"""Pareto ACO experiment orchestrator — mirrors NSGA2Executer."""
+"""Pareto ACO experiment orchestrator
+
+Provides three public methods (run_single_experiment,
+run_repeated_experiment, run_all_experiments) that build the problem
+artifacts from an instance file and run the ParetoACO algorithm,
+persisting results to CSV.
+"""
 
 from __future__ import annotations
 
@@ -9,8 +15,11 @@ from typing import Any
 import pandas as pd
 
 from cvrp.problem.cvrp_benchmark import CVRPBenchmark
-from cvrp.problem.decoders import GiantTourDecoder
-from cvrp.problem.generators import make_giant_tour_generator
+from cvrp.problem.decoders import ClusterFirstDecoder, GiantTourDecoder
+from cvrp.problem.generators import (
+    make_cluster_first_generator,
+    make_giant_tour_generator,
+)
 from cvrp.problem.parser import parse_vrp_file
 from cvrp.swarm.paco import ParetoACO
 
@@ -18,8 +27,12 @@ from cvrp.swarm.paco import ParetoACO
 class PACOExecuter:
     """Run Pareto ACO experiments on benchmark instances.
 
-    Layer 4: giant-tour representation only. Layer 5 can inject another
-    decoder/generator pairing without modifying ``ParetoACO``.
+    Two representations are supported:
+        "giant_tour" — pheromones on customer-pairs; ants build a
+                       permutation of customer ids.
+        "cluster_first" — pheromones on customer-vehicle pairs; ants
+                          build an assignment vector mapping each
+                          customer to a vehicle.
     """
 
     def __init__(
@@ -27,11 +40,10 @@ class PACOExecuter:
         instances_folder: str = "data/",
         representation: str = "giant_tour",
     ) -> None:
-        if representation != "giant_tour":
-            raise NotImplementedError(
-                f"Representation {representation!r} not supported yet. "
-                "Only 'giant_tour' is available in Layer 4; "
-                "'cluster_first' will be added in Layer 5."
+        if representation not in ("giant_tour", "cluster_first"):
+            raise ValueError(
+                f"Unknown representation {representation!r}. "
+                "Must be 'giant_tour' or 'cluster_first'."
             )
 
         self.instances_folder = instances_folder
@@ -46,11 +58,25 @@ class PACOExecuter:
         seed: int | None = None,
         **kwargs: Any,
     ) -> ParetoACO:
-        instance_path = os.path.join(self.instances_folder, instance_name)
-        instance = parse_vrp_file(instance_path)
-        decoder = GiantTourDecoder(instance)
+        """Run PACO once on a single instance.
 
-        paco = ParetoACO(instance=instance, decoder=decoder, **kwargs)
+        Args:
+            instance_name: Filename inside instances_folder, e.g. "X-n101-k25.vrp".
+            seed: Random seed forwarded to ParetoACO.optimize().
+            **kwargs: Hyperparameters forwarded to ParetoACO.__init__()
+                (n_ants, max_iterations, alpha1, alpha2, beta, rho, etc.).
+
+        Returns:
+            The ParetoACO instance after optimize() completes. Access
+            .final_archive, .history, .num_evaluations, .num_generations.
+        """
+        benchmark = self._build_benchmark(instance_name)
+        paco = ParetoACO(
+            instance=benchmark.instance,
+            decoder=benchmark.decoder,
+            representation=self.representation,
+            **kwargs,
+        )
         paco.optimize(seed=seed)
         return paco
 
@@ -60,6 +86,12 @@ class PACOExecuter:
         n_repeat: int = 31,
         **kwargs: Any,
     ) -> pd.DataFrame:
+        """Run PACO n_repeat times on the same instance, varying the seed.
+
+        Returns a long-format DataFrame: one row per Pareto solution
+        per run. Columns: run, solution_idx, f1, f2, n_evaluations,
+        n_generations.
+        """
         rows: list[dict[str, Any]] = []
         for run_idx in range(n_repeat):
             print(f"{instance_name} - run {run_idx + 1}/{n_repeat}")
@@ -85,6 +117,14 @@ class PACOExecuter:
         overwrite: bool = False,
         **kwargs: Any,
     ) -> None:
+        """Run repeated experiments across all instances, one CSV per instance.
+
+        Args:
+            experiment_folder: Output folder for CSVs.
+            n_repeat: Number of independent runs per instance.
+            overwrite: If True, wipe the output folder before writing.
+            **kwargs: Hyperparameters forwarded to ParetoACO.
+        """
         if os.path.isdir(experiment_folder):
             if overwrite:
                 shutil.rmtree(experiment_folder)
@@ -106,8 +146,18 @@ class PACOExecuter:
             print(f"Saved to {csv_path}")
 
     def _build_benchmark(self, instance_name: str) -> CVRPBenchmark:
+        """Parse the instance file and build a CVRPBenchmark.
+
+        The decoder and generator are chosen by self.representation.
+        """
         instance_path = os.path.join(self.instances_folder, instance_name)
         instance = parse_vrp_file(instance_path)
-        decoder = GiantTourDecoder(instance)
-        generator = make_giant_tour_generator(instance)
+
+        if self.representation == "giant_tour":
+            decoder = GiantTourDecoder(instance)
+            generator = make_giant_tour_generator(instance)
+        else:
+            decoder = ClusterFirstDecoder(instance)
+            generator = make_cluster_first_generator(instance)
+
         return CVRPBenchmark(instance, decoder, generator)

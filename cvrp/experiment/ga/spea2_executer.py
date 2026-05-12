@@ -17,8 +17,13 @@ from inspyred import ec
 
 from cvrp.ga.spea2 import SPEA2
 from cvrp.problem.cvrp_benchmark import CVRPBenchmark
-from cvrp.problem.decoders import GiantTourDecoder
-from cvrp.problem.generators import make_giant_tour_generator
+from cvrp.problem.decoders import ClusterFirstDecoder, GiantTourDecoder
+from cvrp.problem.generators import (
+    make_cluster_first_generator,
+    make_giant_tour_generator,
+)
+from cvrp.problem.instance import CVRPInstance
+from cvrp.problem.operators import make_reset_mutation, make_uniform_crossover
 from cvrp.problem.parser import parse_vrp_file
 
 
@@ -30,9 +35,12 @@ class SPEA2Executer:
     persists per-run results to CSV in long format (one row per Pareto
     solution per run).
 
-    Only the giant-tour representation is supported in Layer 4. The
-    cluster-first representation will be added in Layer 5 alongside
-    its custom operators.
+    Two representations are supported:
+        "giant_tour" — permutation of customer ids with PMX crossover
+                       and inversion mutation.
+        "cluster_first" — integer vector assigning each customer to a
+                          vehicle, with uniform crossover and reset
+                          mutation.
     """
 
     def __init__(
@@ -40,11 +48,10 @@ class SPEA2Executer:
         instances_folder: str = "data/",
         representation: str = "giant_tour",
     ) -> None:
-        if representation != "giant_tour":
-            raise NotImplementedError(
-                f"Representation {representation!r} not supported yet. "
-                "Only 'giant_tour' is available in Layer 4; "
-                "'cluster_first' will be added in Layer 5."
+        if representation not in ("giant_tour", "cluster_first"):
+            raise ValueError(
+                f"Unknown representation {representation!r}. "
+                "Must be 'giant_tour' or 'cluster_first'."
             )
 
         self.instances_folder = instances_folder
@@ -52,13 +59,6 @@ class SPEA2Executer:
         self.instances = sorted(
             f for f in os.listdir(instances_folder) if f.endswith(".vrp")
         )
-
-        # Variators for Rep A (giant-tour permutation): PMX crossover
-        # and inversion mutation, both built into inspyred.
-        self.variators = [
-            ec.variators.partially_matched_crossover,
-            ec.variators.inversion_mutation,
-        ]
 
     def run_single_experiment(
         self,
@@ -79,7 +79,8 @@ class SPEA2Executer:
             .final_archive, .history, .num_evaluations, .num_generations.
         """
         benchmark = self._build_benchmark(instance_name)
-        spea2 = SPEA2(benchmark=benchmark, variators=self.variators, **kwargs)
+        variators = self._build_variators(benchmark.instance)
+        spea2 = SPEA2(benchmark=benchmark, variators=variators, **kwargs)
         spea2.run(seed=seed)
         return spea2
 
@@ -123,11 +124,10 @@ class SPEA2Executer:
         """Run repeated experiments across all instances, one CSV per instance.
 
         Args:
-            experiment_folder: Output folder for CSVs (e.g. "experiments/spea2/").
+            experiment_folder: Output folder for CSVs.
             n_repeat: Number of independent runs per instance.
             overwrite: If True, wipe the output folder before writing.
-            **kwargs: Hyperparameters forwarded to SPEA2 (applied to all
-                instances; per-instance scaling is deferred to Layer 5).
+            **kwargs: Hyperparameters forwarded to SPEA2.
         """
         if os.path.isdir(experiment_folder):
             if overwrite:
@@ -150,9 +150,34 @@ class SPEA2Executer:
             print(f"Saved to {csv_path}")
 
     def _build_benchmark(self, instance_name: str) -> CVRPBenchmark:
-        """Parse the instance file and build a CVRPBenchmark for it."""
+        """Parse the instance file and build a CVRPBenchmark.
+
+        The decoder and generator are chosen by self.representation.
+        """
         instance_path = os.path.join(self.instances_folder, instance_name)
         instance = parse_vrp_file(instance_path)
-        decoder = GiantTourDecoder(instance)
-        generator = make_giant_tour_generator(instance)
+
+        if self.representation == "giant_tour":
+            decoder = GiantTourDecoder(instance)
+            generator = make_giant_tour_generator(instance)
+        else:
+            decoder = ClusterFirstDecoder(instance)
+            generator = make_cluster_first_generator(instance)
+
         return CVRPBenchmark(instance, decoder, generator)
+
+    def _build_variators(self, instance: CVRPInstance) -> list:
+        """Build the variator list matching self.representation.
+
+        The giant_tour variators are static inspyred functions; the
+        cluster_first variators are factories bound to the instance.
+        """
+        if self.representation == "giant_tour":
+            return [
+                ec.variators.partially_matched_crossover,
+                ec.variators.inversion_mutation,
+            ]
+        return [
+            make_uniform_crossover(instance),
+            make_reset_mutation(instance),
+        ]
