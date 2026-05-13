@@ -14,7 +14,7 @@
         "crossover_rate": 0.7,
         "mutation_rate": 0.05
       },
-      "hv": 407335.4710054068
+      "hv": 21859255.282376718
     }
   },
   "spea2": {
@@ -28,11 +28,11 @@
     },
     "cluster_first": {
       "hyperparams": {
-        "pop_size": 50,
-        "crossover_rate": 0.7,
+        "pop_size": 100,
+        "crossover_rate": 0.9,
         "mutation_rate": 0.05
       },
-      "hv": 560595.0184892678
+      "hv": 19512591.689240053
     }
   },
   "paco": {
