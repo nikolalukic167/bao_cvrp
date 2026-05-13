@@ -28,19 +28,19 @@ from cvrp.problem.instance import CVRPInstance
 # ----------------------------------------
 # Cluster-first, Route-second(integer vector) operators
 # ----------------------------------------
-def make_uniform_crossover(
-    instance: CVRPInstance,
-    crossover_rate: float = 0.8,
-) -> "Variator":
+def make_uniform_crossover(instance: CVRPInstance) -> "Variator":
     """Factory for uniform crossover on integer chromosomes.
 
     For each gene position, the child inherits the value from either
     parent with equal probability. Produces two children per pair of
     parents. With probability (1 - crossover_rate) the parents are
-    copied unchanged.
+    copied unchanged. The crossover rate is read from
+    args["crossover_rate"] (default 0.8) so the calling algorithm can
+    set it per call.
     """
 
     def variator(random: Random, candidates: list[list[int]], args: dict[str, Any]) -> list[list[int]]:
+        crossover_rate = args.get("crossover_rate", 0.8)
         offspring: list[list[int]] = []
         # Process candidates two at a time as parent pairs.
         for i in range(0, len(candidates) - 1, 2):
@@ -66,18 +66,18 @@ def make_uniform_crossover(
     return variator
 
 
-def make_reset_mutation(
-    instance: CVRPInstance,
-    mutation_rate: float = 0.05,
-) -> "Variator":
+def make_reset_mutation(instance: CVRPInstance) -> "Variator":
     """Factory for reset mutation on integer chromosomes.
 
     Each gene is independently replaced with probability mutation_rate
-    by a uniformly random vehicle id in {1, ..., K}.
+    by a uniformly random vehicle id in {1, ..., K}. The mutation rate
+    is read from args["mutation_rate"] (default 0.05) so the calling
+    algorithm can set it per call.
     """
     num_vehicles = instance.num_vehicles
 
     def variator(random: Random, candidates: list[list[int]], args: dict[str, Any]) -> list[list[int]]:
+        mutation_rate = args.get("mutation_rate", 0.05)
         offspring: list[list[int]] = []
         for chromosome in candidates:
             mutant = list(chromosome)
