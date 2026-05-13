@@ -1,0 +1,59 @@
+{
+  "nsga2": {
+    "giant_tour": {
+      "hyperparams": {
+        "pop_size": 100,
+        "crossover_rate": 0.7,
+        "mutation_rate": 0.2
+      },
+      "hv": 405895.7259126438
+    },
+    "cluster_first": {
+      "hyperparams": {
+        "pop_size": 50,
+        "crossover_rate": 0.7,
+        "mutation_rate": 0.05
+      },
+      "hv": 407335.4710054068
+    }
+  },
+  "spea2": {
+    "giant_tour": {
+      "hyperparams": {
+        "pop_size": 100,
+        "crossover_rate": 0.7,
+        "mutation_rate": 0.2
+      },
+      "hv": 474148.2950108542
+    },
+    "cluster_first": {
+      "hyperparams": {
+        "pop_size": 50,
+        "crossover_rate": 0.7,
+        "mutation_rate": 0.05
+      },
+      "hv": 560595.0184892678
+    }
+  },
+  "paco": {
+    "giant_tour": {
+      "hyperparams": {
+        "n_ants": 50,
+        "alpha1": 1.0,
+        "alpha2": 1.0,
+        "beta": 2.0,
+        "rho": 0.1
+      },
+      "hv": 344665.2855275028
+    },
+    "cluster_first": {
+      "hyperparams": {
+        "n_ants": 50,
+        "alpha1": 1.0,
+        "alpha2": 2.0,
+        "rho": 0.1
+      },
+      "hv": 38033953.906376526
+    }
+  }
+}
