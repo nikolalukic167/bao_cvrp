@@ -39,6 +39,7 @@ GRID_INSTANCE = "X-n101-k25.vrp"
 
 FULL_EXPERIMENTS_FOLDER = "experiments/"
 FULL_BEST_HYPERPARAMS_PATH = os.path.join(FULL_EXPERIMENTS_FOLDER, "best_hyperparams.json")
+FULL_GRID_RESULTS_PATH = os.path.join(FULL_EXPERIMENTS_FOLDER, "grid_search_results.json")
 FULL_N_GRID_SEEDS = 5
 FULL_N_FULL_SEEDS = 31
 
@@ -72,6 +73,7 @@ FULL_EXTRA_KWARGS: dict[str, dict[str, Any]] = {
 
 SMOKE_EXPERIMENTS_FOLDER = "tmp/experiments_smoke/"
 SMOKE_BEST_HYPERPARAMS_PATH = os.path.join(SMOKE_EXPERIMENTS_FOLDER, "best_hyperparams.json")
+SMOKE_GRID_RESULTS_PATH = os.path.join(SMOKE_EXPERIMENTS_FOLDER, "grid_search_results.json")
 SMOKE_N_GRID_SEEDS = 2
 SMOKE_N_FULL_SEEDS = 3
 
@@ -115,11 +117,19 @@ def grid_search_algorithm(
     representation: str,
     n_seeds: int,
 ) -> dict[str, Any]:
-    """Run grid search on one representation; return the best combination.
+    """Run grid search on one representation; return the best combination
+    plus per-combination metadata for downstream analysis.
 
     All combinations and seeds are run first, then a single reference point
     is computed from the union of all fronts. Per-combination HV is the
     mean across seeds using that shared reference point.
+
+    Returns a dict with:
+        hyperparams - the winning hyperparameter combination
+        hv         - mean HV of the winning combination
+        ref_point  - reference point used (max_f1*1.1, max_f2*1.1)
+        all_combos - list of {hyperparams, hv_mean, hv_per_seed} for every
+                     combination, in the order produced by expand_grid.
     """
     combinations = expand_grid(grid)
     print(f"  Running {len(combinations)} combinations x {n_seeds} seeds = "
@@ -153,19 +163,33 @@ def grid_search_algorithm(
     max_f2 = max(p[1] for p in all_points)
     ref_point = (max_f1 * 1.1, max_f2 * 1.1)
 
-    combo_hvs: dict[int, float] = {}
+    combo_seed_hvs: dict[int, list[float]] = {}
+    combo_mean_hvs: dict[int, float] = {}
     for combo_idx in range(len(combinations)):
         seed_hvs = [
             compute_hv(r["front"], ref_point)
             for r in runs
             if r["combo_idx"] == combo_idx
         ]
-        combo_hvs[combo_idx] = sum(seed_hvs) / len(seed_hvs)
+        combo_seed_hvs[combo_idx] = seed_hvs
+        combo_mean_hvs[combo_idx] = sum(seed_hvs) / len(seed_hvs)
 
-    best_idx = max(combo_hvs, key=combo_hvs.get)
+    best_idx = max(combo_mean_hvs, key=combo_mean_hvs.get)
+
+    all_combos = [
+        {
+            "hyperparams": combinations[i],
+            "hv_mean": combo_mean_hvs[i],
+            "hv_per_seed": combo_seed_hvs[i],
+        }
+        for i in range(len(combinations))
+    ]
+
     return {
         "hyperparams": combinations[best_idx],
-        "hv": combo_hvs[best_idx],
+        "hv": combo_mean_hvs[best_idx],
+        "ref_point": list(ref_point),
+        "all_combos": all_combos,
     }
 
 
@@ -271,8 +295,17 @@ def run_grid_phase(
     extra_kwargs: dict[str, dict[str, Any]],
     n_seeds: int,
     best_hyperparams_path: str,
+    grid_results_path: str,
 ) -> None:
     """Grid search on both representations for all three algorithms.
+
+    Writes two output files:
+        best_hyperparams_path - only the winning combo per (algorithm,
+            representation), consumed by the full phase. Structure is
+            unchanged from earlier runs to keep that phase backward
+            compatible.
+        grid_results_path - every combination with per-seed HVs and the
+            reference point used, for downstream heatmap and analysis.
 
     PACO uses separate grids per representation: beta is included for
     giant_tour (where eta^beta guides construction geometrically) but
@@ -294,32 +327,52 @@ def run_grid_phase(
     representations = ["giant_tour", "cluster_first"]
 
     best: dict[str, dict[str, dict[str, Any]]] = {}
+    grid_results: dict[str, dict[str, dict[str, Any]]] = {}
+
+    def store(algorithm: str, representation: str, result: dict[str, Any]) -> None:
+        best[algorithm][representation] = {
+            "hyperparams": result["hyperparams"],
+            "hv": result["hv"],
+        }
+        grid_results[algorithm][representation] = {
+            "ref_point": result["ref_point"],
+            "all_combos": result["all_combos"],
+        }
 
     for algorithm, executer_class, grid in ga_algorithms:
         print(f"\n{algorithm.upper()}...")
         best[algorithm] = {}
+        grid_results[algorithm] = {}
         for representation in representations:
             result = grid_search_algorithm(
                 executer_class, GRID_INSTANCE, grid,
                 extra_kwargs[algorithm], representation, n_seeds,
             )
-            best[algorithm][representation] = result
-            print(f"  Best {algorithm}/{representation}: {result}")
+            store(algorithm, representation, result)
+            print(f"  Best {algorithm}/{representation}: "
+                  f"hyperparams={result['hyperparams']}, hv={result['hv']:.2f}")
 
     print("\nPACO...")
     best["paco"] = {}
+    grid_results["paco"] = {}
     for representation in representations:
         result = grid_search_algorithm(
             PACOExecuter, GRID_INSTANCE, paco_grids[representation],
             extra_kwargs["paco"], representation, n_seeds,
         )
-        best["paco"][representation] = result
-        print(f"  Best paco/{representation}: {result}")
+        store("paco", representation, result)
+        print(f"  Best paco/{representation}: "
+              f"hyperparams={result['hyperparams']}, hv={result['hv']:.2f}")
 
     os.makedirs(os.path.dirname(best_hyperparams_path) or ".", exist_ok=True)
     with open(best_hyperparams_path, "w") as f:
         json.dump(best, f, indent=2)
     print(f"\nSaved best hyperparams to {best_hyperparams_path}")
+
+    os.makedirs(os.path.dirname(grid_results_path) or ".", exist_ok=True)
+    with open(grid_results_path, "w") as f:
+        json.dump(grid_results, f, indent=2)
+    print(f"Saved full grid results to {grid_results_path}")
 
 
 def main() -> None:
@@ -346,6 +399,7 @@ def main() -> None:
     if args.smoke_test:
         experiments_folder = SMOKE_EXPERIMENTS_FOLDER
         best_hyperparams_path = SMOKE_BEST_HYPERPARAMS_PATH
+        grid_results_path = SMOKE_GRID_RESULTS_PATH
         n_grid_seeds = SMOKE_N_GRID_SEEDS
         n_full_seeds = SMOKE_N_FULL_SEEDS
         nsga2_spea2_grid = SMOKE_NSGA2_SPEA2_GRID
@@ -357,6 +411,7 @@ def main() -> None:
     else:
         experiments_folder = FULL_EXPERIMENTS_FOLDER
         best_hyperparams_path = FULL_BEST_HYPERPARAMS_PATH
+        grid_results_path = FULL_GRID_RESULTS_PATH
         n_grid_seeds = FULL_N_GRID_SEEDS
         n_full_seeds = FULL_N_FULL_SEEDS
         nsga2_spea2_grid = FULL_NSGA2_SPEA2_GRID
@@ -371,6 +426,7 @@ def main() -> None:
         run_grid_phase(
             nsga2_spea2_grid, paco_grid_giant_tour, paco_grid_cluster_first,
             extra_kwargs, n_grid_seeds, best_hyperparams_path,
+            grid_results_path,
         )
 
     if args.phase in ("full", "all"):
