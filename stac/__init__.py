@@ -4,18 +4,14 @@
 
 """
 
-from stac_bun.parametric_tests import *
-from stac_bun.nonparametric_tests import *
+from stac.parametric_tests import *
+from stac.nonparametric_tests import *
 from scipy.stats import ttest_ind, ttest_rel, wilcoxon, mannwhitneyu
 
 __all__ = ['anova_test',
            'bonferroni_test',
            'binomial_sign_test',
-           'wilcoxon_test',
-           'test_ranking',
            'friedman_test',
-           'iman_davenport_test',
-           'friedman_rangos_alineados_test',
            'quade_test',
            'bonferroni_dunn_test',
            'holm_test',
