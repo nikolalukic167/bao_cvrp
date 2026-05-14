@@ -85,23 +85,32 @@ class NSGA2Executer:
         return nsga2
 
     def run_repeated_experiment(
-        self,
-        instance_name: str,
-        n_repeat: int = 31,
-        **kwargs: Any,
-    ) -> pd.DataFrame:
+            self,
+            instance_name: str,
+            n_repeat: int = 31,
+            **kwargs: Any,
+    ) -> tuple[pd.DataFrame, list]:
         """Run NSGA-II n_repeat times on the same instance, varying the seed.
 
-        Returns a long-format DataFrame: one row per Pareto solution
-        per run. Columns: run, solution_idx, f1, f2, n_evaluations,
-        n_generations.
+        Returns:
+            df: Long-format DataFrame with one row per Pareto solution per
+                run. Columns: run, solution_idx, f1, f2, chromosome,
+                n_evaluations, n_generations. The chromosome column is a
+                comma-separated string of integers, parseable with
+                list(map(int, s.split(','))).
+            histories: List of length n_repeat. histories[i] is the
+                per-generation history of run i (list of generations, each
+                a list of (chromosome, (f1, f2)) tuples). For persistence to
+                .npz, pass this to cvrp.experiment.history_io.save_history.
         """
         rows: list[dict[str, Any]] = []
+        histories: list = []
         for run_idx in range(n_repeat):
             print(f"{instance_name} - run {run_idx + 1}/{n_repeat}")
             nsga2 = self.run_single_experiment(
                 instance_name, seed=run_idx, **kwargs
             )
+            histories.append(nsga2.history)
             for sol_idx, ind in enumerate(nsga2.final_archive):
                 f1, f2 = ind.fitness.values
                 rows.append({
@@ -109,10 +118,11 @@ class NSGA2Executer:
                     "solution_idx": sol_idx,
                     "f1": f1,
                     "f2": f2,
+                    "chromosome": ",".join(str(g) for g in ind.candidate),
                     "n_evaluations": nsga2.num_evaluations,
                     "n_generations": nsga2.num_generations,
                 })
-        return pd.DataFrame(rows)
+        return pd.DataFrame(rows), histories
 
     def run_all_experiments(
         self,
@@ -141,7 +151,7 @@ class NSGA2Executer:
 
         for instance_name in self.instances:
             print(f"Running experiments for {instance_name}")
-            df = self.run_repeated_experiment(
+            df, _histories = self.run_repeated_experiment(
                 instance_name, n_repeat=n_repeat, **kwargs
             )
             stem = os.path.splitext(instance_name)[0]

@@ -214,5 +214,6 @@ scratch_*.ipynb
 .ipynb_checkpoints/
 
 tmp/
+experiments/history/
 
 PG7_CVRP_Project_Documentation*

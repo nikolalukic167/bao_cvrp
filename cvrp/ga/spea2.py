@@ -117,9 +117,10 @@ class SPEA2(ec.EvolutionaryComputation):
     Attributes filled in by run():
         final_archive: list of non-dominated individuals (the Pareto
             front approximation found by the algorithm).
-        history: list with one entry per generation, each entry being a
-            snapshot of the population. Used for convergence and
-            diversity plots in later layers.
+        history: list with one entry per generation. Each entry is a list
+            of (chromosome, (f1, f2)) tuples — one per individual in that
+            generation's population. Used for convergence and diversity
+            plots.
         num_generations: number of generations actually executed
             (set by inspyred during evolve()).
         num_evaluations: total number of fitness evaluations performed
@@ -195,5 +196,14 @@ class SPEA2(ec.EvolutionaryComputation):
         return self.final_archive
 
     def _observer(self, population, num_generations, num_evaluations, args) -> None:
-        """Record a snapshot of the population every generation."""
-        self.history.append(list(population))
+        """Record a deep snapshot of the population every generation.
+
+        Stores a list of (candidate, fitness.values) tuples so that the
+        chromosome is preserved against later in-place mutation by inspyred.
+        """
+        from copy import deepcopy
+        snapshot = [
+            (deepcopy(ind.candidate), tuple(ind.fitness.values))
+            for ind in population
+        ]
+        self.history.append(snapshot)

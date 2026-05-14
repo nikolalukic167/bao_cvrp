@@ -81,23 +81,33 @@ class PACOExecuter:
         return paco
 
     def run_repeated_experiment(
-        self,
-        instance_name: str,
-        n_repeat: int = 31,
-        **kwargs: Any,
-    ) -> pd.DataFrame:
+            self,
+            instance_name: str,
+            n_repeat: int = 31,
+            **kwargs: Any,
+    ) -> tuple[pd.DataFrame, list]:
         """Run PACO n_repeat times on the same instance, varying the seed.
 
-        Returns a long-format DataFrame: one row per Pareto solution
-        per run. Columns: run, solution_idx, f1, f2, n_evaluations,
-        n_generations.
+        Returns:
+            df: Long-format DataFrame with one row per Pareto solution per
+                run. Columns: run, solution_idx, f1, f2, chromosome,
+                n_evaluations, n_generations. The chromosome column is a
+                comma-separated string of integers, parseable with
+                list(map(int, s.split(','))).
+            histories: List of length n_repeat. histories[i] is the
+                per-iteration history of run i (list of iterations, each a
+                list of (chromosome, (f1, f2)) tuples for the ants in that
+                iteration). For persistence to .npz, pass this to
+                cvrp.experiment.history_io.save_history.
         """
         rows: list[dict[str, Any]] = []
+        histories: list = []
         for run_idx in range(n_repeat):
             print(f"{instance_name} - run {run_idx + 1}/{n_repeat}")
             paco = self.run_single_experiment(
                 instance_name, seed=run_idx, **kwargs
             )
+            histories.append(paco.history)
             for sol_idx, ind in enumerate(paco.final_archive):
                 f1, f2 = ind.fitness.values
                 rows.append({
@@ -105,10 +115,11 @@ class PACOExecuter:
                     "solution_idx": sol_idx,
                     "f1": f1,
                     "f2": f2,
+                    "chromosome": ",".join(str(g) for g in ind.candidate),
                     "n_evaluations": paco.num_evaluations,
                     "n_generations": paco.num_generations,
                 })
-        return pd.DataFrame(rows)
+        return pd.DataFrame(rows), histories
 
     def run_all_experiments(
         self,
@@ -137,7 +148,7 @@ class PACOExecuter:
 
         for instance_name in self.instances:
             print(f"Running experiments for {instance_name}")
-            df = self.run_repeated_experiment(
+            df, _histories = self.run_repeated_experiment(
                 instance_name, n_repeat=n_repeat, **kwargs
             )
             stem = os.path.splitext(instance_name)[0]

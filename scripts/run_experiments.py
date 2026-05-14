@@ -32,6 +32,7 @@ from cvrp.experiment.ga.nsga2_executer import NSGA2Executer
 from cvrp.experiment.ga.spea2_executer import SPEA2Executer
 from cvrp.experiment.swarm.paco_executer import PACOExecuter
 from cvrp.metrics.pareto_metrics import compute_hv
+from cvrp.experiment.history_io import save_history
 
 
 INSTANCES_FOLDER = "data/"
@@ -40,6 +41,7 @@ GRID_INSTANCE = "X-n101-k25.vrp"
 FULL_EXPERIMENTS_FOLDER = "experiments/"
 FULL_BEST_HYPERPARAMS_PATH = os.path.join(FULL_EXPERIMENTS_FOLDER, "best_hyperparams.json")
 FULL_GRID_RESULTS_PATH = os.path.join(FULL_EXPERIMENTS_FOLDER, "grid_search_results.json")
+FULL_HISTORY_FOLDER = os.path.join(FULL_EXPERIMENTS_FOLDER, "history")
 FULL_N_GRID_SEEDS = 5
 FULL_N_FULL_SEEDS = 31
 
@@ -74,6 +76,7 @@ FULL_EXTRA_KWARGS: dict[str, dict[str, Any]] = {
 SMOKE_EXPERIMENTS_FOLDER = "tmp/experiments_smoke/"
 SMOKE_BEST_HYPERPARAMS_PATH = os.path.join(SMOKE_EXPERIMENTS_FOLDER, "best_hyperparams.json")
 SMOKE_GRID_RESULTS_PATH = os.path.join(SMOKE_EXPERIMENTS_FOLDER, "grid_search_results.json")
+SMOKE_HISTORY_FOLDER = os.path.join(SMOKE_EXPERIMENTS_FOLDER, "history")
 SMOKE_N_GRID_SEEDS = 2
 SMOKE_N_FULL_SEEDS = 3
 
@@ -202,31 +205,42 @@ def run_one_task(
     extra_kwargs: dict[str, Any],
     n_repeat: int,
     output_root: str,
+    history_root: str,
 ) -> str:
     """Run repeated experiments for a single (algorithm, representation, instance).
 
-    The output CSV path includes the representation as a subfolder. If the
-    CSV already exists, the task is skipped, which allows resuming after
-    an interruption without re-running completed work. CSV write is atomic:
-    data is written to a .tmp file first, then renamed.
+    Persists two artifacts:
+        output_root/{algorithm}/{representation}/{instance}.csv
+            One row per Pareto solution per run, with chromosome column.
+        history_root/{algorithm}/{representation}/{instance}.npz
+            All chromosomes and fitnesses at every generation, across all
+            runs. See cvrp.experiment.history_io for the array layout.
+
+    If both files already exist, the task is skipped (resume support).
+    Both writes are atomic (tmp file + os.replace for CSV, np.savez
+    writes atomically by default).
     """
     output_folder = os.path.join(output_root, algorithm, representation)
+    history_folder = os.path.join(history_root, algorithm, representation)
     stem = os.path.splitext(instance_name)[0]
     csv_path = os.path.join(output_folder, f"{stem}.csv")
+    npz_path = os.path.join(history_folder, f"{stem}.npz")
 
-    if os.path.exists(csv_path):
+    if os.path.exists(csv_path) and os.path.exists(npz_path):
         return f"SKIP {csv_path} (already exists)"
 
     os.makedirs(output_folder, exist_ok=True)
+    os.makedirs(history_folder, exist_ok=True)
     executer = executer_class(
         instances_folder=INSTANCES_FOLDER, representation=representation
     )
-    df = executer.run_repeated_experiment(
+    df, histories = executer.run_repeated_experiment(
         instance_name, n_repeat=n_repeat, **hyperparams, **extra_kwargs
     )
     tmp_path = csv_path + ".tmp"
     df.to_csv(tmp_path, index=False)
     os.replace(tmp_path, csv_path)
+    save_history(histories, npz_path)
     return f"OK   {csv_path}"
 
 
@@ -236,6 +250,7 @@ def run_full_experiments(
     instances: list[str],
     n_repeat: int,
     output_root: str,
+    history_root: str,
     n_jobs: int,
 ) -> None:
     """Run all (algorithm, representation, instance) tasks in parallel.
@@ -273,6 +288,7 @@ def run_full_experiments(
                     extra,
                     n_repeat,
                     output_root,
+                    history_root,
                 ))
 
     print(f"Total tasks: {len(tasks)} "
@@ -398,6 +414,7 @@ def main() -> None:
 
     if args.smoke_test:
         experiments_folder = SMOKE_EXPERIMENTS_FOLDER
+        history_folder = SMOKE_HISTORY_FOLDER
         best_hyperparams_path = SMOKE_BEST_HYPERPARAMS_PATH
         grid_results_path = SMOKE_GRID_RESULTS_PATH
         n_grid_seeds = SMOKE_N_GRID_SEEDS
@@ -410,6 +427,7 @@ def main() -> None:
         print("*** SMOKE TEST MODE ***")
     else:
         experiments_folder = FULL_EXPERIMENTS_FOLDER
+        history_folder = FULL_HISTORY_FOLDER
         best_hyperparams_path = FULL_BEST_HYPERPARAMS_PATH
         grid_results_path = FULL_GRID_RESULTS_PATH
         n_grid_seeds = FULL_N_GRID_SEEDS
@@ -447,7 +465,7 @@ def main() -> None:
 
         run_full_experiments(
             best, extra_kwargs, instances,
-            n_full_seeds, experiments_folder, args.n_jobs,
+            n_full_seeds, experiments_folder, history_folder, args.n_jobs,
         )
         print("\nDone.")
 

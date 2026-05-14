@@ -86,6 +86,11 @@ class ParetoACO:
     Construction is dispatched to _construct_solution_giant_tour or
     _construct_solution_cluster_first based on self.representation.
     Update is dispatched similarly.
+
+    After optimize() completes, self.history holds one snapshot per
+    iteration. Each snapshot is a list of (chromosome, (f1, f2)) tuples,
+    one per ant constructed in that iteration. The shape is parallel to
+    NSGA2.history and SPEA2.history for analysis purposes.
     """
 
     def __init__(
@@ -215,9 +220,10 @@ class ParetoACO:
             # Reinforce pheromones from the iteration trails (T in the pseudocode).
             self._update_pheromone(trails)
 
-            self.history.append(
-                [self._make_individual(c, f) for c, f in self._archive]
-            )
+            self.history.append([
+                (list(chromosome), tuple(fitness))
+                for chromosome, fitness in trails
+            ])
             self.num_generations = it + 1
 
         self.final_archive = [
