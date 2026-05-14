@@ -17,6 +17,7 @@ For example:
 from __future__ import annotations
 
 import os
+import numpy as np
 from typing import Literal
 
 import pandas as pd
@@ -53,13 +54,25 @@ class ExperimentLoader:
             paco/
                 giant_tour/...
                 cluster_first/...
+            The optional history_folder (default: experiments_folder/history)
+            contains .npz files with full per-generation history:
+            history/
+                nsga2/giant_tour/X-n101-k25.npz
+                ...
 
     Each CSV has the columns produced by the executers:
         run, solution_idx, f1, f2, n_evaluations, n_generations
     """
 
-    def __init__(self, experiments_folder: str) -> None:
+    def __init__(
+            self,
+            experiments_folder: str,
+            history_folder: str | None = None,
+    ) -> None:
         self.experiments_folder = experiments_folder
+        self.history_folder = history_folder or os.path.join(
+            experiments_folder, "history"
+        )
         self.data = self._load_all()
 
     def _load_all(self) -> pd.DataFrame:
@@ -209,3 +222,36 @@ class ExperimentLoader:
         raise ValueError(
             f"Unknown metric {metric!r}. Must be one of: hv, sp, gd, pf."
         )
+
+    def load_history(
+            self,
+            algorithm: str,
+            representation: str,
+            instance: str,
+    ) -> dict[str, np.ndarray]:
+        """Load per-generation history for one (algorithm, representation, instance).
+
+        Reads the .npz file persisted by save_history during full experiments.
+        Returns a dict with three numpy arrays of uniform shape:
+
+            chromosomes: int32   (n_runs, n_gens, n_pop, chrom_len)
+            f1:          float64 (n_runs, n_gens, n_pop)
+            f2:          float64 (n_runs, n_gens, n_pop)
+
+        Used by convergence plots (fitness, chromosome similarity, diversity)
+        which need the full evolution trajectory across all 31 runs.
+        """
+        npz_path = os.path.join(
+            self.history_folder, algorithm, representation, f"{instance}.npz"
+        )
+        if not os.path.isfile(npz_path):
+            raise FileNotFoundError(
+                f"History file not found: {npz_path}. "
+                f"Run full experiments to generate per-generation history."
+            )
+        data = np.load(npz_path)
+        return {
+            "chromosomes": data["chromosomes"],
+            "f1": data["f1"],
+            "f2": data["f2"],
+        }
