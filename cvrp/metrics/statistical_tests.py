@@ -75,6 +75,7 @@ def wilcoxon_test(
 def friedman_shaffer_test(
     groups: dict[str, Sequence[float]],
     alpha: float = 0.05,
+    maximize: bool = False,
 ) -> dict:
     """Friedman Aligned Ranks + Shaffer post-hoc for N-way comparison.
 
@@ -91,6 +92,11 @@ def friedman_shaffer_test(
                 All lists must have the same length (same number of runs).
                 Example: {"NSGA-II": [...], "SPEA2": [...], "PACO": [...]}
         alpha: Significance level. Default 0.05.
+        maximize: If True, larger values are treated as better. The function
+                negates inputs before computing ranks so that the convention
+                "lower rank = better" holds in the output regardless of metric
+                direction. Use maximize=True for HV, PF, accuracy, etc.; leave
+                False for SP, GD, error, time, etc.
 
     Returns:
         Dict with keys:
@@ -113,6 +119,9 @@ def friedman_shaffer_test(
             f"All groups must have the same number of observations. "
             f"Got: {dict(zip(names, lengths))}"
         )
+
+    if maximize:
+        values = [[-v for v in vlist] for vlist in values]
 
     friedman_stat, friedman_p, rankings, pivots = (
         friedman_aligned_ranks_test(*values)
