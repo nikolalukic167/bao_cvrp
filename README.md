@@ -1,74 +1,193 @@
-# Multi-objective Capacitated Vehicle Routing Problem
+# PG7 — Multi-Objective CVRP
 
-The aim of this project is to analyze, design and implement solutions to an
-optimization problem using the techniques and mechanisms of bioinspired algorithms taught in
-the Bioinspired Algorithms for Optimization (BAO) course.
-To do so, students will develop a programming project in Python language in a group using the
-PyCharm programming environment, which provides the necessary tools for the development,
-testing, documentation and debugging of source code in Python. Other environments can be
-used but must be consulted first with the professors.
-Instructions for the development of the Project
-Each student must select one of the available problems. The problem will be solved using
-the techniques learned during the lectures of the course. The solving must include:
+Multi-objective metaheuristic comparison for the Capacitated Vehicle Routing Problem (CVRP). Bi-objective formulation:
+- **f1**: total distance + capacity-overflow penalty
+- **f2**: load imbalance across vehicles
 
-- Solving it with at least one evolutionary algorithm and one swarm intelligence
-algorithm.
-- Using different representations for the problem, comparing and discussing which
-one is the better.
-If the problem has constraints, testing different constraint handling techniques.
-- If the problem is multi-objective, testing different multi-objective algorithms and
-metrics.
-- Fine-tuning to find the best hyperparameter configuration for each algorithm used,
-showing the results of these experiments with all the configurations tested in the
-report.
-- The evaluation of the problem must be done taking into account that these
-methods are stochastic, so more than 30 executions for each algorithm
-configuration must be performed for the sake of a statistically significant
-comparison.
-- The evaluation of the problem must include comparisons in terms of quality and
-speed (runtime), as well as showing for the most significant configurations the
-convergence and diversity during the iterative process using some graphics.
- -For the comparison of two algorithmic configurations, statistical significance
-testing must be performed.
-- Using advanced techniques (e.g. parallelism, co-evolution, memetic algorithms,
-…) is allowed, but not mandatory.
+Three algorithms (**NSGA-II**, **SPEA2**, **Pareto ACO**) on two representations (**giant tour**, **cluster first**), evaluated on **12 PyVRP X-n\* benchmark instances** with **31 independent runs** each.
 
-Apart from developing a Python project to solve the problem, the students will have to
-write a report following the scheme provided in the file “Report template.pdf”, explaining
-the conceptualization, analysis, design, implementation and experimental results
-obtained during the project development. Also, a 10 minutes presentation explaining all of
-these parts must be developed and presented during the presentation sessions.
-Regulations and evaluation
-The project assignment should be carried out taking into account the following rules:
-- The project assignment will be carried out in groups. Each group must independently
-develop its own project assignment and submit its own project.
-- For the development of bioinspired algorithm functionalities needed in the project
-assignment, use the library inspyred. 
-• The use of any auxiliary library, such as numpy or pandas, is allowed.
+## Project structure
 
-## Problem Description
-The Capacitated Vehicle Routing Problem (CVRP) is a fundamental logistics and supply
-chain optimization problem in which you have a central depot, a fleet of identical delivery
-vehicles with a fixed carrying capacity, and a set of geographically dispersed customers,
-each requiring a specific demand of goods. The objective is to design a set of closed
-delivery routes to service all customers while minimizing the overall transportation cost.
-A solution to this problem is a set of distinct routes, where each route defines the exact
-sequence of customers assigned to a specific vehicle. For a solution to be valid, every
-customer must be visited exactly once by a single vehicle, all routes must start and end at
-the central depot (located at 0,0), and the total demand of all customers on any given
-route must be less than or equal to the maximum weight/volume capacity of the vehicle.
-Variation
+```
+bao_cvrp/
+├── cvrp/
+│   ├── ga/                          # GA algorithms
+│   │   ├── nsga2.py                 # inspyred NSGA-II wrapper
+│   │   └── spea2.py                 # custom SPEA2 implementation
+│   ├── swarm/
+│   │   └── paco.py                  # standalone Pareto ACO
+│   ├── problem/
+│   │   ├── cvrp_benchmark.py        # inspyred Benchmark subclass
+│   │   ├── parser.py                # .vrp file parser
+│   │   ├── decoders.py              # GiantTourDecoder, ClusterFirstDecoder
+│   │   ├── fitness.py               # evaluate(routes, instance)
+│   │   ├── operators.py             # uniform crossover + reset mutation
+│   │   └── generators.py            # per-representation generators
+│   ├── metrics/
+│   │   ├── pareto_metrics.py        # HV, SP, GD, PF
+│   │   └── statistical_tests.py     # Wilcoxon, Friedman+Shaffer
+│   └── experiment/
+│       ├── ga/                      # NSGA2Executer, SPEA2Executer
+│       ├── swarm/                   # PACOExecuter
+│       ├── experiment_loader.py     # CSV + .npz loader
+│       ├── history_io.py            # .npz save/load
+│       └── visualization.py         # plotting helpers
+├── data/                            # 12 X-n*.vrp files
+├── experiments/
+│   ├── {algo}/{rep}/*.csv           # final archives per run
+│   ├── history/{algo}/{rep}/*.npz   # gitignored — per-gen history
+│   ├── best_hyperparams.json
+│   └── grid_search_results.json
+├── notebooks/
+│   ├── run_nsga2.ipynb              # single-instance demo
+│   ├── run_spea2.ipynb
+│   ├── run_paco.ipynb
+│   └── compare_results.ipynb        # final cross-algorithm analysis
+├── scripts/
+│   └── run_experiments.py           # grid + full pipeline
+├── stac/                            # local patched stac (not pip)
+├── requirements.txt
+└── README.md
+```
 
-In this version of the problem, the students must implement a multi-objective approach.
-The objectives to consider are:
+## Installation
 
-- Minimizing total distance
-- Balancing the demand covered by each vehicle, i.e. demand covered by each vehicle should be as similar as possible
+Python 3.12+ required.
 
-### Data
-100 samples of data can be downloaded from this webpage: https://github.com/PyVRP/Instances/tree/main/CVRP
+```bash
+python -m venv .venv
+source .venv/bin/activate          # on Linux/Mac
+.venv\Scripts\Activate.ps1         # on Windows PowerShell
 
-Each sample in the dataset consists of a file with the format “X-n[T]-k[V].vrp”, where [T] is
-the number of tasks and [V] is the number of available vehicles. Each file is text formatted
-and contains the capacity for each vehicle, the coordinates (NODE_COORD_SECTION) for
-the tasks and the demand (DEMAND_SECTION) of each task.
+pip install -r requirements.txt
+```
+
+The `stac` library is included as a local patched folder under `stac/` (not installed via pip due to a numpy 2.x compatibility patch).
+
+## Running experiments
+
+**Phase 1 — grid search** on a single instance (X-n101-k25) with `inspyred`-driven hyperparameter sweep:
+
+```bash
+python -m scripts.run_experiments --phase grid
+```
+
+Produces `experiments/best_hyperparams.json` and `experiments/grid_search_results.json`. Cost: ~1.5h.
+
+**Phase 2 — full experiments** across all 12 instances with the winning hyperparameters from Phase 1:
+
+```bash
+python -m scripts.run_experiments --phase full --n-jobs 8
+```
+
+Adjust `--n-jobs` to your machine (8 is safe for 16-core CPUs; reduce if memory-limited). Cost: ~3-4h on 8 cores.
+
+**Idempotency:** each `(algorithm, representation, instance)` task is skipped if both its CSV and .npz already exist. Re-running resumes from where it left off.
+
+**Smoke test** (1 instance, tiny budget, ~1 min):
+
+```bash
+python -m scripts.run_experiments --phase full --smoke-test
+```
+
+## Running notebooks
+
+```bash
+jupyter notebook
+```
+
+- `notebooks/run_{nsga2,spea2,paco}.ipynb` — per-algorithm single-instance demos
+- `notebooks/compare_results.ipynb` — final cross-algorithm analysis (depends on full experiments)
+
+`compare_results.ipynb` expects:
+- CSV files in `experiments/{algo}/{rep}/*.csv`
+- .npz files in `experiments/history/{algo}/{rep}/*.npz`
+- `experiments/best_hyperparams.json`, `experiments/grid_search_results.json`
+
+## Regenerating gitignored history files
+
+The `experiments/history/` directory (~1.7 GB across 36 .npz files; 4 files exceed GitHub's 100 MB limit) is gitignored. It contains per-generation chromosomes and fitnesses needed by the convergence and diversity plots in `compare_results.ipynb`.
+
+Regenerate:
+```bash
+python -m scripts.run_experiments --phase full --n-jobs 8
+```
+(~3-4 hours)
+
+## Output formats
+
+### CSV (`experiments/{algo}/{rep}/{instance}.csv`)
+
+One row per Pareto solution per run:
+
+| column | type | description |
+|---|---|---|
+| `run` | int | 0..30 |
+| `solution_idx` | int | index within final archive |
+| `f1` | float | distance + penalty |
+| `f2` | float | load imbalance |
+| `chromosome` | str | comma-separated genes (`"1,5,2,4,..."`) |
+| `n_evaluations` | int | total evals in the run |
+| `n_generations` | int | generations completed |
+
+### .npz (`experiments/history/{algo}/{rep}/{instance}.npz`)
+
+Compressed numpy archive with three arrays of uniform shape:
+
+```python
+data["chromosomes"]  # int32   shape (n_runs, n_gens, n_pop, chrom_len)
+data["f1"]           # float64 shape (n_runs, n_gens, n_pop)
+data["f2"]           # float64 shape (n_runs, n_gens, n_pop)
+```
+
+Use `ExperimentLoader.load_history(algo, rep, instance)` to access.
+
+### `best_hyperparams.json`
+
+```json
+{
+  "nsga2": {
+    "giant_tour":    {"hyperparams": {...}, "hv": ...},
+    "cluster_first": {"hyperparams": {...}, "hv": ...}
+  },
+  "spea2": {...},
+  "paco":  {...}
+}
+```
+
+### `grid_search_results.json`
+
+Same as above plus, per (algo, rep), an `all_combos` list with the full HV landscape:
+
+```json
+{
+  "ref_point": [f1_max, f2_max],
+  "all_combos": [
+    {"hyperparams": {...}, "hv_mean": ..., "hv_per_seed": [...]},
+    ...
+  ]
+}
+```
+
+## Algorithms
+
+### NSGA-II (Deb et al., 2002)
+inspyred's built-in `ec.emo.NSGA2` with custom variators per representation. Non-dominated sorting + crowding distance for replacement, tournament selection driven by Pareto dominance + crowding.
+
+### SPEA2 (Zitzler et al., 2001)
+Custom implementation subclassing `inspyred.ec.EvolutionaryComputation`. Strength-based fitness `F(i) = R(i) + D(i)`, tournament selection, truncation replacement, `best_archiver` for the external archive.
+
+### Pareto ACO (Doerner et al., 2004)
+Standalone class (not inspyred). Two pheromone matrices `τ1`, `τ2` (one per objective), construction probability `∝ τ1^α1 · τ2^α2 · η^β`. External Pareto archive trimmed by even spread along f1.
+
+### Representations
+
+- **`giant_tour`** — permutation of customer ids. Decoder splits the sequence at capacity, so feasibility is structural.
+- **`cluster_first`** — integer vector assigning each customer to a vehicle. Capacity is not enforced; infeasibility is penalized in f1.
+
+## References
+
+- Demšar, J. (2006). Statistical comparisons of classifiers over multiple data sets. *JMLR* 7, 1-30.
+- Deb, K., Pratap, A., Agarwal, S., Meyarivan, T. (2002). A fast and elitist multiobjective genetic algorithm: NSGA-II. *IEEE TEC* 6(2).
+- Zitzler, E., Laumanns, M., Thiele, L. (2001). SPEA2: Improving the Strength Pareto Evolutionary Algorithm. TIK Tech. Report 103.
+- Doerner, K., Gutjahr, W.J., Hartl, R.F., Strauss, C., Stummer, C. (2004). Pareto ant colony optimization. *Annals of OR* 131.
