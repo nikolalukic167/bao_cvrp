@@ -108,10 +108,22 @@ jupyter notebook
 
 The `experiments/history/` directory (~1.7 GB across 36 .npz files; 4 files exceed GitHub's 100 MB limit) is gitignored. It contains per-generation chromosomes and fitnesses needed by the convergence and diversity plots in `compare_results.ipynb`.
 
-Regenerate:
+**Option A — Download pre-computed files (recommended):**
+
+📁 [Google Drive — experiment history (.npz)](https://drive.google.com/drive/folders/1epaM8M4RtAmJTr6zG8BhlMlKFcZtRnPx?usp=drive_link)
+
+After downloading, extract the contents so the structure matches:
+
+```
+experiments/history/{algo}/{rep}/{instance}.npz
+```
+
+**Option B — Regenerate locally:**
+
 ```bash
 python -m scripts.run_experiments --phase full --n-jobs 8
 ```
+
 (~3-4 hours)
 
 ## Output formats
