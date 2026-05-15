@@ -395,3 +395,231 @@ def plot_parameter_heatmap(
                             color=color, fontsize=8)
 
     return ax
+
+def plot_fitness_convergence(
+    f_arr: np.ndarray,
+    objective_name: str = "f1",
+    ax: Axes | None = None,
+    label_prefix: str | None = None,
+) -> Axes:
+    """Convergence of one fitness objective over generations.
+
+    For each generation, computes max (worst), mean, and min (best)
+    fitness within each population, then averages those across runs.
+    Three curves are drawn so that both the spread (max vs min) and the
+    central tendency (mean) of the population are visible across the
+    evolution.
+
+    Args:
+        f_arr: numpy array of shape (n_runs, n_gens, n_pop) with fitness
+            values for one objective. Use load_history()["f1"] or ["f2"].
+        objective_name: Label for the y-axis ("f1" or "f2").
+        ax: Optional matplotlib Axes.
+        label_prefix: Optional prefix for legend entries (e.g. algorithm
+            name for overlays).
+
+    Returns:
+        The Axes used for plotting.
+    """
+    if ax is None:
+        _, ax = plt.subplots(figsize=(8, 4))
+
+    f_max = f_arr.max(axis=2).mean(axis=0)   # (n_gens,) worst-in-pop avg
+    f_mean = f_arr.mean(axis=2).mean(axis=0) # (n_gens,) mean-in-pop avg
+    f_min = f_arr.min(axis=2).mean(axis=0)   # (n_gens,) best-in-pop avg
+
+    gens = np.arange(len(f_max))
+    pre = f"{label_prefix} " if label_prefix else ""
+    ax.fill_between(gens, f_max, f_min, alpha=0.15)
+    ax.plot(gens, f_max, linestyle="--", linewidth=1.2, label=f"{pre}max")
+    ax.plot(gens, f_mean, linewidth=1.8, label=f"{pre}mean")
+    ax.plot(gens, f_min, linestyle="--", linewidth=1.2, label=f"{pre}min")
+
+    ax.set_xlabel("Generation")
+    ax.set_ylabel(objective_name)
+    ax.set_title(f"{objective_name} convergence (averaged over runs)")
+    ax.legend(loc="best", frameon=True, fontsize=9)
+    ax.grid(True, alpha=0.3)
+    return ax
+
+
+def plot_chromosome_convergence(
+    chromosomes: np.ndarray,
+    ax: Axes | None = None,
+    label: str | None = None,
+) -> Axes:
+    """Chromosome similarity within the population over generations.
+
+    For each generation, for each position in the chromosome, the
+    fraction of the population that carries the most common value at
+    that position is computed; the curve plots the mean of those
+    fractions across positions, averaged across runs.
+
+    Interpretation: starts near 1/pop_size (random) and rises toward 1
+    as the population converges to similar chromosomes. Complementary
+    to fitness convergence: shows whether the population is exploring
+    diverse genotypes or collapsing onto one solution.
+
+    Args:
+        chromosomes: numpy array of shape (n_runs, n_gens, n_pop,
+            chrom_len). Use load_history()["chromosomes"].
+        ax: Optional matplotlib Axes.
+        label: Optional series label.
+
+    Returns:
+        The Axes used for plotting.
+    """
+    if ax is None:
+        _, ax = plt.subplots(figsize=(8, 4))
+
+    n_runs, n_gens, n_pop, chrom_len = chromosomes.shape
+    convergence = np.zeros((n_runs, n_gens))
+
+    for r in range(n_runs):
+        for g in range(n_gens):
+            pop = chromosomes[r, g]  # (n_pop, chrom_len)
+            per_pos_max_count = np.zeros(chrom_len)
+            for p in range(chrom_len):
+                _vals, counts = np.unique(pop[:, p], return_counts=True)
+                per_pos_max_count[p] = counts.max()
+            convergence[r, g] = per_pos_max_count.mean() / n_pop
+
+    avg = convergence.mean(axis=0)
+    gens = np.arange(len(avg))
+    ax.plot(gens, avg, marker="o", markersize=3, linewidth=1.5, label=label)
+
+    ax.set_xlabel("Generation")
+    ax.set_ylabel("Mean per-position homogeneity")
+    ax.set_title("Chromosome convergence")
+    ax.set_ylim(0, 1.05)
+    if label:
+        ax.legend(loc="best", frameon=True)
+    ax.grid(True, alpha=0.3)
+    return ax
+
+
+def plot_diversity(
+    chromosomes: np.ndarray,
+    ax: Axes | None = None,
+    label: str | None = None,
+) -> Axes:
+    """Number of distinct chromosomes in the population per generation.
+
+    Counts unique rows in each (run, generation) slice and averages
+    across runs. A monotonically decreasing curve indicates the
+    population is collapsing to fewer distinct solutions; a flat curve
+    near pop_size indicates sustained genetic diversity.
+
+    Args:
+        chromosomes: numpy array of shape (n_runs, n_gens, n_pop,
+            chrom_len). Use load_history()["chromosomes"].
+        ax: Optional matplotlib Axes.
+        label: Optional series label.
+
+    Returns:
+        The Axes used for plotting.
+    """
+    if ax is None:
+        _, ax = plt.subplots(figsize=(8, 4))
+
+    n_runs, n_gens, n_pop, _chrom_len = chromosomes.shape
+    unique_counts = np.zeros((n_runs, n_gens))
+
+    for r in range(n_runs):
+        for g in range(n_gens):
+            pop = chromosomes[r, g]
+            unique_counts[r, g] = len(np.unique(pop, axis=0))
+
+    avg = unique_counts.mean(axis=0)
+    gens = np.arange(len(avg))
+    ax.plot(gens, avg, marker="o", markersize=3, linewidth=1.5, label=label)
+
+    ax.set_xlabel("Generation")
+    ax.set_ylabel("Distinct chromosomes")
+    ax.set_title(f"Population diversity (out of {n_pop})")
+    ax.set_ylim(0, n_pop * 1.05)
+    if label:
+        ax.legend(loc="best", frameon=True)
+    ax.grid(True, alpha=0.3)
+    return ax
+
+
+def plot_critical_difference(
+    rankings: dict[str, float],
+    post_hoc: list[dict[str, Any]],
+    ax: Axes | None = None,
+    title: str | None = None,
+) -> Axes:
+    """N-vs-N significance graph for Friedman + Shaffer comparison.
+
+    Algorithms are shown as nodes, sized and colored by their mean rank
+    (lower = better, smaller node). An edge connects two algorithms
+    only when they do NOT differ significantly after Shaffer correction.
+    Disconnected algorithms differ significantly. If Friedman is not
+    significant overall, all algorithms are connected (complete graph)
+    to indicate global equivalence.
+
+    Follows the visualization pattern from the BAO course's statistics
+    comparison notebook.
+
+    Args:
+        rankings: Mapping from algorithm name to mean rank. Use
+            friedman_shaffer_test(...)["rankings"].
+        post_hoc: List of pairwise comparison dicts with keys
+            "comparison" and "significant". Empty list if Friedman is
+            not significant. Use friedman_shaffer_test(...)["post_hoc"].
+        ax: Optional matplotlib Axes.
+        title: Optional plot title.
+
+    Returns:
+        The Axes used for plotting.
+    """
+    import networkx as nx
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=(7, 5))
+
+    names = list(rankings.keys())
+    ranks = [rankings[n] for n in names]
+
+    if post_hoc:
+        g = nx.Graph()
+        g.add_nodes_from([(n, {"rank": rankings[n]}) for n in names])
+        for ph in post_hoc:
+            if not ph.get("significant", True):
+                parts = ph["comparison"].split("vs")
+                if len(parts) == 2:
+                    name_l = parts[0].strip()
+                    name_r = parts[1].strip()
+                    g.add_edge(name_l, name_r)
+    else:
+        g = nx.complete_graph(names)
+        for n in names:
+            g.nodes[n]["rank"] = rankings[n]
+
+    pos = nx.kamada_kawai_layout(g, scale=0.5)
+    node_sizes = [g.nodes[n]["rank"] * 80 for n in g.nodes()]
+    node_colors = [g.nodes[n]["rank"] for n in g.nodes()]
+
+    nx.draw_networkx(
+        g, pos=pos, ax=ax,
+        node_size=node_sizes,
+        node_color=node_colors,
+        cmap="plasma",
+        with_labels=True,
+        font_color="w",
+        font_size=9,
+        font_weight="bold",
+    )
+
+    sm = plt.cm.ScalarMappable(
+        cmap="plasma",
+        norm=plt.Normalize(vmin=min(ranks), vmax=max(ranks)),
+    )
+    sm.set_array([])
+    plt.colorbar(sm, ax=ax, label="Mean rank (lower = better)")
+
+    if title:
+        ax.set_title(title)
+    ax.set_axis_off()
+    return ax
